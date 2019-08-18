@@ -9,7 +9,7 @@ import librosa
 import numpy as np
 import tqdm
 
-from utils import chars_to_ids
+from utils import chars_to_labels, save_alphabet
 
 
 def unique_letters(transcriptions: list):
@@ -26,11 +26,9 @@ def process(input, alphabet, args):
     and saves all as .npz file.
 
     The elements of .npz file are:
-        transcription (str): Normalized transcription of audio
-        ids (list): Labels as integers, ending with <END> token (value=0)
+        labels (list): Labels as integers, ending with <END> token (value=0)
         lin_spectrogram (np.array): Linear spectrogram of audio in form [timesteps, frequencies]
         mel_spectrogram (np.array): Mel-spectrogram of audio in form [timesteps, frequencies]
-        restored_audio (np.array): Audio restored from linear spectrograms (for comparison purposes).
 
     Args:
         input (tuple): Tuple containing filename from meta (without extension) and corresponding string transcription
@@ -50,17 +48,12 @@ def process(input, alphabet, args):
                                           win_length=window_length))
     mel_spectrogram = librosa.feature.melspectrogram(S=lin_spectrogram ** 2, n_mels=args.n_mels)
 
-    # generate audio with Griffin-Lim algorithm from ground truth spectrograms for comparison during training
-    restored_audio = librosa.griffinlim(lin_spectrogram, args.griffin_lim_iter, hop_length, window_length)
-
-    ids = chars_to_ids(transcription, alphabet)
+    labels = chars_to_labels(transcription, alphabet)
 
     np.savez(output_path,
-             transcription=transcription,
-             ids=ids,
+             labels=labels,
              lin_spectrogram=lin_spectrogram.T,
-             mel_spectrogran=mel_spectrogram.T,
-             restored_audio=restored_audio)
+             mel_spectrogram=mel_spectrogram.T)
 
 
 def run(args):
@@ -78,6 +71,7 @@ def run(args):
 
     alphabet = unique_letters(transcriptions)
     alphabet = ['END'] + alphabet  # allows for zero-padding inputs during training
+    save_alphabet(alphabet, os.path.join(args.output_dir, 'alphabet.txt'))
 
     pool = mp.pool.Pool(args.cpu_count)
     print('Running script on {} CPUs'.format(args.cpu_count))
