@@ -1,6 +1,10 @@
 """Does offline data preprocessing of LJdataset"""
+import warnings
+
+warnings.filterwarnings('ignore', category=FutureWarning)
 import argparse
 import functools
+import glob
 import multiprocessing as mp
 import os
 import pathlib
@@ -21,6 +25,32 @@ def unique_letters(transcriptions: list):
     return unique
 
 
+def find_already_processed(output_directory, override):
+    """Finds files that are already processed and ones that are possibly corrupt.
+
+    Args:
+        output_directory (str): Path to output directory, where processed files will be stored.
+        override (bool): Specifies wheter the existing files should be overriden.
+
+    Returns:
+        already_processed (list): List of files that are already processed.
+        filenames_to_remove (list): List of filenames to remove from previous runs of script.
+    """
+    current_filenames = os.listdir(output_directory)
+    filenames_to_remove = glob.glob(output_directory + '/*.temp_npz')
+    already_processed = [name.rstrip('.npz') for name in current_filenames if name.endswith('.npz')]
+
+    if override:
+        return [], filenames_to_remove
+    else:
+        return already_processed, filenames_to_remove
+
+
+def remove_corrupted_files(filepaths):
+    for file in filepaths:
+        os.remove(file)
+
+
 def process(input, alphabet, args):
     """Processes single audio file: converts it to linear and mel spectrogram, transforms transcription into numerical labels
     and saves all as .npz file.
@@ -37,7 +67,6 @@ def process(input, alphabet, args):
     """
     filename, transcription = input
     input_path = os.path.join(args.input_dir, filename + '.wav')
-    output_path = os.path.join(args.output_dir, filename + '.npz')
 
     audio, sr = librosa.load(input_path, args.sampling_rate)
     window_length = int(args.frame_length * sr / 1000)
@@ -50,14 +79,22 @@ def process(input, alphabet, args):
 
     labels = chars_to_labels(transcription, alphabet)
 
-    np.savez(output_path,
+    # according to POSIX, only operation of file renaming is atomic
+    temporary_path = os.path.join(args.output_dir, filename + '.temp.npz')
+    output_path = os.path.join(args.output_dir, filename + '.npz')
+    np.savez(temporary_path,
              labels=labels,
              lin_spectrogram=lin_spectrogram.T,
              mel_spectrogram=mel_spectrogram.T)
+    # atomic operation
+    os.rename(temporary_path, output_path)
 
 
 def run(args):
     pathlib.Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+
+    already_processed_filenames, filenames_to_remove = find_already_processed(args.output_dir, args.override)
+    remove_corrupted_files(filenames_to_remove)
 
     transcriptions = []
     filenames = []
@@ -65,6 +102,8 @@ def run(args):
         for line in f.readlines():
             line = line.rstrip('\n')
             filename = line.split('|')[0]
+            if filename in already_processed_filenames:
+                continue
             transcription = line.split('|')[2]
             transcriptions.append(transcription)
             filenames.append(filename)
@@ -91,7 +130,8 @@ if __name__ == '__main__':
     parser.add_argument('--n_fft', type=int, help='Length of FFT window', default=2048)
     parser.add_argument('--n_mels', type=int, help='Number of mel bins', default=80)
     parser.add_argument('--griffin_lim_iter', type=int, help='Number of Griffin-Lim algorithm iterations', default=50)
-    parser.add_argument('--cpu_count', type=int, help='Number of cpu cores to run script concurrently', default=mp.cpu_count())
+    parser.add_argument('--cpu_count', type=int, help='Number of cpu cores to run script concurrently', default=mp.cpu_count()),
+    parser.add_argument('--override', help='Boolean flag specifying wheter to override already processed files', action='store_true')
     args = parser.parse_args()
 
     run(args)
