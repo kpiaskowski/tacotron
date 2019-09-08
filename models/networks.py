@@ -166,7 +166,7 @@ class Encoder(tf.keras.Model):
             embedding_size (int): Size of embeddings.
             prenet_units (list): List of neurons per prenet layer.
             k (int): Number of convolutional filters in bank.
-            conv_conv_bank_units (int): Number of neurons in conv bank layers.
+            conv_bank_units (int): Number of neurons in conv bank layers.
             conv_proj_units (list): Number of neurons per conv projection layer.
             highway_units (list): Number of neurons in each highway layer.
             gru_units (int): Number of neurons in single GRU layer.
@@ -343,3 +343,58 @@ class DecoderRNN(tf.keras.Model):
         outputs = tf.reshape(outputs, [-1, self.r, self.n_mels])
 
         return outputs, out_hidden_states, tf.squeeze(attention_score, -1)
+
+
+class PostProcessor(tf.keras.Model):
+    def __init__(self,
+                 k,
+                 conv_bank_units,
+                 conv_proj_units,
+                 highway_units,
+                 gru_units,
+                 output_units):
+        """Initializes Post-processing network.
+
+        Args:
+            k (int): Number of convolutional filters in bank.
+            conv_bank_units (int): Number of neurons in conv bank layers.
+            conv_proj_units (list): Number of neurons per conv projection layer.
+            highway_units (list): Number of neurons in each highway layer.
+            gru_units (int): Number of neurons in single GRU layer.
+            output_units (int): Size of output layer (size of linear spectrograms).
+        """
+        super(PostProcessor, self).__init__(name='PostProcessor')
+        self.K = k
+        self.conv_bank_units = conv_bank_units
+        self.conv_proj_units = conv_proj_units
+        self.highway_units = highway_units
+        self.gru_units = gru_units
+        self.output_units = output_units
+
+        self.cbhg = CBHG(
+            K=self.K,
+            conv_bank_units=self.conv_bank_units,
+            conv_projection_units=self.conv_proj_units,
+            highway_units=self.highway_units,
+            gru_units=self.gru_units
+        )
+        self.output_projection = tf.keras.layers.Dense(self.output_units)
+
+    def __call__(self, inputs, is_training):
+        """Processes all mel-predictions and computes linear predictions.
+
+        Args:
+            inputs (tf.EagerTensor): Outputs from decoder RNN, shaped [batch, timesteps, n_mels]
+            is_training (bool): Boolean switch for dropout.
+
+        Returns:
+            tf.EagerTensor: Processed inputs, shaped [batch, timesteps, linear_bins]
+        """
+        rnn_out, *_ = self.cbhg(inputs, is_training=is_training)
+        out = self.output_projection(rnn_out)
+        return out
+
+    def compute_output_shape(self, input_shape):
+        shape = tf.TensorShape(input_shape).as_list()
+        shape.append(self.output_units)
+        return tf.TensorShape(shape)

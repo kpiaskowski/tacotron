@@ -69,3 +69,15 @@ def load_alphabet(path):
 def preemphasis(signal, coeff=0.97):
     emphasized_signal = np.append(signal[0], signal[1:] - coeff * signal[:-1])
     return emphasized_signal
+
+
+def get_lr(step):
+    """Returns learning rate for current training step (values based on paper)"""
+    if step < 500000:
+        return 0.001
+    if step < 1000000:
+        return 0.0005
+    if step < 2000000:
+        return 0.0003
+    else:
+        return 0.0001
