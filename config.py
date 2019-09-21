@@ -3,6 +3,11 @@ n_mels = 80
 r = 2
 iterations = 3000000
 
+# audio
+hop_size = 12.5
+window_size = 50
+sampling_rate = 24000
+
 # encoder
 enc_embedding_size = 256
 enc_prenet_units = [256, 128]
