@@ -1,6 +1,19 @@
+#paths
+data_dir = None
+alphabet_path = None
+load_checkpoint_path = None
+
 # general
+experiment_prefix = 'tacotron'
+batch_size = 2
+loss_log_step = 5
+predict_log_step = 500
+save_step = 2000
+
 n_mels = 80
 r = 2
+max_train_steps = 350
+max_eval_steps = 350 // r
 iterations = 3000000
 
 # audio

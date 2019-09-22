@@ -1,7 +1,8 @@
 import os
 import warnings
 from datetime import datetime
-import time
+
+warnings.filterwarnings('ignore', category=FutureWarning)
 import librosa
 import numpy as np
 from tensorflow.python.ops.summary_ops_v2 import create_file_writer
@@ -9,27 +10,14 @@ from tensorflow.python.training.checkpoint_management import CheckpointManager
 from tensorflow.python.training.tracking.util import Checkpoint
 from tensorflow.python.training.training_util import get_or_create_global_step
 
-import tensorflow as tf
 import config
 import utils
 from models.networks import Encoder, DecoderRNN, PostProcessor
 
-warnings.filterwarnings('ignore', category=FutureWarning)
 import tensorflow as tf
 
 from models.dataprovider import DataProvider
 from utils import load_alphabet
-
-# todo move to config
-data_dir = '/media/kpiaskowski/1721eb42-bb52-4fe7-984f-19ec7ce1fcc0/datasets/converted_LJSpeech'
-alphabet_path = '/media/kpiaskowski/1721eb42-bb52-4fe7-984f-19ec7ce1fcc0/datasets/converted_LJSpeech/alphabet.txt'
-batch_size = 2
-max_eval_steps = 350 // config.r
-loss_log_step = 1
-predict_log_step = 500
-save_step = 2000
-experiment_prefix = 'tacotron'
-max_train_steps = 350
 
 
 def trim_to_r(labels, mel_spectrograms, lin_spectrograms):
@@ -60,9 +48,9 @@ def compute_loss(labels, mel_spectrograms, lin_spectrograms, encoder, decoder_rn
     """
     labels, mel_spectrograms, lin_spectrograms = trim_to_r(labels, mel_spectrograms, lin_spectrograms)
 
-    if max_train_steps is not None:
-        lin_spectrograms = lin_spectrograms[:, :max_train_steps, :]
-        mel_spectrograms = mel_spectrograms[:, :max_train_steps, :]
+    if config.max_train_steps is not None:
+        lin_spectrograms = lin_spectrograms[:, :config.max_train_steps, :]
+        mel_spectrograms = mel_spectrograms[:, :config.max_train_steps, :]
 
     with tf.GradientTape() as tape:
         enc_output, enc_hidden = encoder(labels, is_training=True)
@@ -211,13 +199,14 @@ def log_other(input_example, writer, vocabulary, encoder, decoder_rnn, postproce
     """
     labels, _, _ = input_example
 
-    _, lin_predictions, attention_scores = predict(labels, max_eval_steps, encoder, decoder_rnn, postprocessing_net)
+    _, lin_predictions, attention_scores = predict(labels, config.max_eval_steps, encoder, decoder_rnn,
+                                                   postprocessing_net)
     lin_predictions = tf.transpose(lin_predictions, [0, 2, 1])
 
     attention_scores = tf.expand_dims(tf.transpose(attention_scores, [0, 2, 1]), -1)
     # normalize scores
     attention_scores = (attention_scores - tf.reduce_min(attention_scores)) \
-                       / (tf.reduce_max(attention_scores) - tf.reduce_min(attention_scores) + 1e-8)
+                       / (tf.reduce_max(attention_scores) - tf.reduce_min(attention_scores) + 1e-8) * 255
 
     text_labels = np.array([utils.labels_to_chars(lab, vocabulary) for lab in labels])
 
@@ -250,9 +239,9 @@ def log_other(input_example, writer, vocabulary, encoder, decoder_rnn, postproce
 
 
 def run():
-    provider = DataProvider(data_dir, batch_size)
+    provider = DataProvider(config.data_dir, config.batch_size)
     train_dataset, val_dataset = provider.datasets()
-    vocabulary = load_alphabet(alphabet_path)
+    vocabulary = load_alphabet(config.alphabet_path)
     vocabulary_size = len(vocabulary)
 
     # create network
@@ -289,7 +278,7 @@ def run():
     optimizer = tf.keras.optimizers.Adam(utils.get_lr(global_step.numpy()))
 
     # saving and logging ops
-    prefix = experiment_prefix + '_' + datetime.now().strftime('%Y-%m-%d %H:%M')
+    prefix = config.experiment_prefix + '_' + datetime.now().strftime('%Y-%m-%d %H:%M')
     train_writer = create_file_writer(os.path.join('results/logs', prefix, 'train'), flush_millis=100)
     val_writer = create_file_writer(os.path.join('results/logs', prefix, 'val'), flush_millis=100)
     checkpoint = Checkpoint(
@@ -304,6 +293,10 @@ def run():
         max_to_keep=5
     )
 
+    if config.load_checkpoint_path is not None:
+        checkpoint.restore(config.load_checkpoint_path)
+        print('Model restored from {}'.format(config.load_checkpoint_path))
+
     # training starts here
     for _ in range(global_step.numpy(), config.iterations):
         # training step
@@ -317,7 +310,7 @@ def run():
         )
 
         # log scalar losses
-        if global_step % loss_log_step == 0:
+        if global_step.numpy() % config.loss_log_step == 0:
             train_loss = log_losses(
                 input_example=next(train_dataset),
                 writer=train_writer,
@@ -341,7 +334,7 @@ def run():
             ))
 
         # log non-scalar data
-        if global_step % predict_log_step == 0:
+        if global_step.numpy() % config.predict_log_step == 0:
             log_other(
                 input_example=next(train_dataset),
                 writer=train_writer,
@@ -363,7 +356,7 @@ def run():
             print('Logged synthesized audio and attention scores at step {}'.format(global_step.numpy()))
 
         # save network
-        if global_step % save_step == 0 and global_step > 0:
+        if global_step.numpy() % config.save_step == 0 and global_step > 0:
             checkpoint_manager.save(global_step)
             print('Model saved at step {}'.format(global_step.numpy()))
 
